@@ -46,8 +46,8 @@ export default function Home() {
           {budget === 0 ? (
             <div className="text-center">
               <div className="text-4xl">🥧</div>
-              <p className="font-display mt-1 text-xl">هنوز بودجه‌ای نذاشتی</p>
-              <Link href="/budget" className="btn mt-3 bg-white">بودجه این ماه رو بچین</Link>
+              <p className="font-display mt-1 text-xl">هنوز بودجه ماه رو نذاشتی</p>
+              <Link href="/budget" className="btn mt-3 bg-white">یه عدد بذار</Link>
             </div>
           ) : (
             <>

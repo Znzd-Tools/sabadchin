@@ -102,3 +102,10 @@ export const PRI_BY_KEY = Object.fromEntries(PRIORITIES.map((p) => [p.key, p])) 
   Priority,
   (typeof PRIORITIES)[number]
 >;
+
+/** Typical share (%) of monthly living spend for an Iranian household. Sums to 100. */
+export const DEFAULT_WEIGHTS: Record<string, number> = {
+  grocery: 13, produce: 8, protein: 12, dairy: 6, snack: 4, clean: 4, care: 3, health: 5,
+  appliance: 6, kitchen: 2, furniture: 3, repair: 3, bills: 8, tech: 3, clothes: 6,
+  transport: 5, eatout: 4, fun: 2, gift: 2, pet: 0, other: 1,
+};

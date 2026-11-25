@@ -2,7 +2,8 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { supabaseBrowser } from "@/lib/supabase/client";
-import { monthKey, monthsBetween } from "@/lib/jalali";
+import { monthKey, monthsBetween, prevMonthKey } from "@/lib/jalali";
+import { CATEGORIES, DEFAULT_WEIGHTS } from "@/lib/categories";
 import type { Priority } from "@/lib/categories";
 
 export type Item = {
@@ -52,6 +53,7 @@ type Ctx = {
   spentIn: (month: string, category?: string) => number;
   budgetFor: (category: string, month: string) => number;
   totalBudget: (month: string) => number;
+  isManual: (category: string, month: string) => boolean;
   fund: { rewards: { month: string; budget: number; spent: number; saved: number }[]; rewardTotal: number; manual: number; balance: number };
   // actions
   addItem: (n: NewItem) => Promise<void>;
@@ -59,7 +61,8 @@ type Ctx = {
   removeItem: (id: string) => Promise<void>;
   markBought: (id: string, actual?: number) => Promise<void>;
   undoBought: (id: string) => Promise<void>;
-  setBudget: (category: string, amount: number) => Promise<void>;
+  setTotalBudget: (amount: number) => Promise<void>;
+  setCategoryBudget: (category: string, amount: number) => Promise<void>;
   addGoal: (g: { title: string; emoji: string; target_toman: number }) => Promise<void>;
   activateGoal: (id: string) => Promise<void>;
   removeGoal: (id: string) => Promise<void>;
@@ -76,6 +79,7 @@ export const useStore = () => {
 };
 
 const RATE_KEY = "sabadchin:rate";
+const TOTAL = "_total";
 
 export const itemCost = (i: Item) => (i.status === "bought" ? i.actual_toman ?? i.est_toman : i.est_toman) * i.qty;
 
@@ -164,7 +168,8 @@ export function StoreProvider({
     [items],
   );
 
-  const budgetFor = useCallback(
+  // Latest budget row at or before the month (so changes only apply going forward).
+  const effective = useCallback(
     (category: string, mk: string) => {
       let best: Budget | null = null;
       for (const b of budgets) if (b.category === category && b.month <= mk && (!best || b.month > best.month)) best = b;
@@ -173,15 +178,54 @@ export function StoreProvider({
     [budgets],
   );
 
-  const totalBudget = useCallback(
-    (mk: string) => {
-      const cats = new Set(budgets.map((b) => b.category));
-      let s = 0;
-      cats.forEach((c) => (s += budgetFor(c, mk)));
-      return s;
+  const totalBudget = useCallback((mk: string) => effective(TOTAL, mk), [effective]);
+
+  const isManual = useCallback((category: string, mk: string) => effective(category, mk) > 0, [effective]);
+
+  // One total → automatic split. Manual overrides are kept; the rest is shared by weights
+  // (defaults for Iranian households, blended 50/50 with what you really spent in the last 3 months).
+  const allocCache = useMemo(() => new Map<string, Record<string, number>>(), [budgets, items]); // eslint-disable-line react-hooks/exhaustive-deps
+  const allocate = useCallback(
+    (mk: string): Record<string, number> => {
+      const hit = allocCache.get(mk);
+      if (hit) return hit;
+      const total = effective(TOTAL, mk);
+      const out: Record<string, number> = {};
+      const manual = CATEGORIES.filter((c) => effective(c.key, mk) > 0);
+      let rest = total;
+      for (const c of manual) {
+        out[c.key] = effective(c.key, mk);
+        rest -= out[c.key];
+      }
+      rest = Math.max(0, rest);
+
+      let h = prevMonthKey(mk);
+      const past: Record<string, number> = {};
+      let pastTotal = 0;
+      for (let n = 0; n < 3; n++, h = prevMonthKey(h)) {
+        for (const i of items) {
+          if (i.status === "bought" && i.bought_at && monthKey(i.bought_at) === h) {
+            past[i.category] = (past[i.category] ?? 0) + itemCost(i);
+            pastTotal += itemCost(i);
+          }
+        }
+      }
+      const auto = CATEGORIES.filter((c) => !manual.includes(c));
+      const w = auto.map((c) => {
+        const d = DEFAULT_WEIGHTS[c.key] ?? 0;
+        return pastTotal > 0 ? 0.5 * d + 0.5 * ((past[c.key] ?? 0) / pastTotal) * 100 : d;
+      });
+      const sum = w.reduce((a, b) => a + b, 0) || 1;
+      auto.forEach((c, idx) => {
+        out[c.key] = rest > 0 ? Math.round(((rest * w[idx]) / sum) / 1000) * 1000 : 0;
+      });
+      allocCache.set(mk, out);
+      return out;
     },
-    [budgets, budgetFor],
+    [allocCache, effective, items],
   );
+
+  const budgetFor = useCallback((category: string, mk: string) => allocate(mk)[category] ?? 0, [allocate]);
 
   const fund = useMemo(() => {
     const start = monthKey(family.created_at);
@@ -247,13 +291,15 @@ export function StoreProvider({
     await updateItem(id, { status: "todo", bought_at: null, bought_by: null, actual_toman: null });
   };
 
-  const setBudget: Ctx["setBudget"] = async (category, amount) => {
+  const upsertBudget = async (category: string, amount: number) => {
     setBudgets((p) => [...p.filter((b) => !(b.category === category && b.month === month)), { family_id: fid, category, month, amount_toman: amount }]);
     const { error } = await sb
       .from("budgets")
       .upsert({ family_id: fid, category, month, amount_toman: amount }, { onConflict: "family_id,category,month" });
     if (error) throw error;
   };
+  const setTotalBudget: Ctx["setTotalBudget"] = (amount) => upsertBudget(TOTAL, amount);
+  const setCategoryBudget: Ctx["setCategoryBudget"] = (category, amount) => upsertBudget(category, amount);
 
   const addGoal: Ctx["addGoal"] = async (g) => {
     const first = goals.length === 0;
@@ -291,8 +337,8 @@ export function StoreProvider({
 
   const value: Ctx = {
     family, me, members, nameOf, items, budgets, goals, moves, rate, ready, month,
-    spentIn, budgetFor, totalBudget, fund,
-    addItem, updateItem, removeItem, markBought, undoBought, setBudget,
+    spentIn, budgetFor, totalBudget, isManual, fund,
+    addItem, updateItem, removeItem, markBought, undoBought, setTotalBudget, setCategoryBudget,
     addGoal, activateGoal, removeGoal, addMove, setRewardPct, signOut,
   };
   return <StoreCtx.Provider value={value}>{children}</StoreCtx.Provider>;
