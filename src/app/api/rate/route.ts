@@ -4,21 +4,22 @@ import { NextResponse } from "next/server";
 // Every endpoint here is configurable/replaceable: exchanges change them without notice.
 type Json = unknown;
 
+const num = (v: unknown) => {
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0 ? n : null;
+};
+
 const SOURCES: { name: string; url: string; pick: (j: Json) => number | null }[] = [
+  ...(process.env.ABAN_RATE_URL ? [{ name: "custom", url: process.env.ABAN_RATE_URL, pick: findUsdt }] : []),
+  { name: "abantether-otc", url: "https://api.abantether.com/api/v1/otc/coin-price?coin=USDT", pick: findUsdt },
+  { name: "abantether-otc2", url: "https://abantether.com/api/v1/otc/coin-price?coin=USDT", pick: findUsdt },
+  { name: "abantether-coins", url: "https://abantether.com/management/all-coins/", pick: findUsdt },
   {
-    name: "abantether",
-    url: process.env.ABAN_RATE_URL ?? "https://abantether.com/management/all-coins/?format=json",
-    pick: findUsdt,
+    name: "wallex",
+    url: "https://api.wallex.ir/v1/markets",
+    pick: (j) => num((j as { result?: { symbols?: Record<string, { stats?: { lastPrice?: string } }> } })?.result?.symbols?.USDTTMN?.stats?.lastPrice),
   },
-  {
-    name: "nobitex",
-    url: "https://api.nobitex.ir/v3/orderbook/USDTIRT",
-    pick: (j) => {
-      const o = j as { lastTradePrice?: string };
-      const v = Number(o?.lastTradePrice);
-      return Number.isFinite(v) && v > 0 ? v : null;
-    },
-  },
+  { name: "nobitex", url: "https://api.nobitex.ir/v3/orderbook/USDTIRT", pick: (j) => num((j as { lastTradePrice?: string })?.lastTradePrice) },
 ];
 
 function findUsdt(node: Json): number | null {
@@ -46,7 +47,27 @@ function findUsdt(node: Json): number | null {
   return null;
 }
 
-export async function GET() {
+export async function GET(req: Request) {
+  const debug = new URL(req.url).searchParams.has("debug");
+  if (debug) {
+    const out = await Promise.all(
+      SOURCES.map(async (s) => {
+        try {
+          const r = await fetch(s.url, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(6000), cache: "no-store" });
+          const t = await r.text();
+          let picked: number | null = null;
+          try {
+            picked = s.pick(JSON.parse(t));
+          } catch {}
+          return { name: s.name, status: r.status, picked, snippet: t.slice(0, 220) };
+        } catch (e) {
+          return { name: s.name, error: String(e) };
+        }
+      }),
+    );
+    return NextResponse.json(out);
+  }
+
   const errors: string[] = [];
   for (const s of SOURCES) {
     try {
