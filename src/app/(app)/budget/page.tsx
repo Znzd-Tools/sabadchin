@@ -6,6 +6,7 @@ import { CATEGORIES, GROUPS, catOf, type Group } from "@/lib/categories";
 import { fa, parseToman, short, usd } from "@/lib/format";
 import { monthKey, monthLabel, nextMonthKey, prevMonthKey } from "@/lib/jalali";
 import { useStore } from "@/lib/store";
+import BudgetSuggest from "@/components/budget-suggest";
 
 export default function BudgetPage() {
   const s = useStore();
@@ -40,6 +41,7 @@ export default function BudgetPage() {
         }
       />
       <div className="flex flex-col gap-4 px-4">
+        {viewMonth === s.month && <BudgetSuggest onCustom={() => open("total")} />}
         <button onClick={() => open("total")} className="card p-5 text-start active:scale-[0.99]" style={{ background: "#CDEBB8" }}>
           <div className="flex items-baseline justify-between">
             <span className="text-sm font-extrabold">{isPast ? "بودجه کل این ماه (گذشته)" : "بودجه کل این ماه"}</span>

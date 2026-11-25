@@ -11,9 +11,7 @@ const num = (v: unknown) => {
 
 const SOURCES: { name: string; url: string; pick: (j: Json) => number | null }[] = [
   ...(process.env.ABAN_RATE_URL ? [{ name: "custom", url: process.env.ABAN_RATE_URL, pick: findUsdt }] : []),
-  { name: "abantether-otc", url: "https://api.abantether.com/api/v1/otc/coin-price?coin=USDT", pick: findUsdt },
-  { name: "abantether-otc2", url: "https://abantether.com/api/v1/otc/coin-price?coin=USDT", pick: findUsdt },
-  { name: "abantether-coins", url: "https://abantether.com/management/all-coins/", pick: findUsdt },
+  // Verified working from Vercel (Nov 2026). Abantether has no public price endpoint we could find.
   {
     name: "wallex",
     url: "https://api.wallex.ir/v1/markets",

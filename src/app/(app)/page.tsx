@@ -8,6 +8,7 @@ import { fa, short, usd } from "@/lib/format";
 import { daysLeftInMonth, monthLabel } from "@/lib/jalali";
 import { itemCost, useStore } from "@/lib/store";
 import RateSheet, { RateChip } from "@/components/rate-sheet";
+import BudgetSuggest from "@/components/budget-suggest";
 import { overdueSuggestions } from "@/lib/suggest";
 
 export default function Home() {
@@ -46,6 +47,8 @@ export default function Home() {
       />
 
       <div className="flex flex-col gap-4 px-4">
+        <BudgetSuggest />
+
         {/* month card */}
         <section className="card overflow-hidden p-5" style={{ background: "#FFE9B0" }}>
           {budget === 0 ? (

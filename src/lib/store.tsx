@@ -23,7 +23,8 @@ export type Item = {
   created_by: string;
   created_at: string;
 };
-export type Budget = { family_id: string; category: string; month: string; amount_toman: number };
+export type Budget = { family_id: string; category: string; month: string; amount_toman: number; rate?: number | null };
+export type BudgetSuggestion = { toman: number; usd: number | null; basis: string; prevToman: number };
 export type Goal = { id: string; family_id: string; title: string; emoji: string; target_toman: number; is_active: boolean };
 export type Move = { id: string; family_id: string; amount_toman: number; note: string; created_by: string; created_at: string };
 export type Family = {
@@ -61,6 +62,8 @@ type Ctx = {
   budgetFor: (category: string, month: string) => number;
   totalBudget: (month: string) => number;
   isManual: (category: string, month: string) => boolean;
+  budgetSuggestion: BudgetSuggestion | null;
+  acceptBudget: (toman: number) => Promise<void>;
   fund: { rewards: { month: string; budget: number; spent: number; saved: number }[]; rewardTotal: number; manual: number; balance: number };
   // actions
   addItem: (n: NewItem) => Promise<void>;
@@ -308,6 +311,46 @@ export function StoreProvider({
     return { rewards: rewards.reverse(), rewardTotal, manual, balance: rewardTotal + manual };
   }, [family.created_at, family.reward_pct, month, totalBudget, spentIn, moves]);
 
+  // New month, no budget confirmed yet → suggest one. Dollar is the stable unit, Toman drifts up,
+  // so: last budget and recent real spending are converted to USD, averaged, then × today's rate.
+  const budgetSuggestion = useMemo<BudgetSuggestion | null>(() => {
+    if (budgets.some((b) => b.category === TOTAL && b.month === month)) return null;
+    const prev = budgets.filter((b) => b.category === TOTAL && b.month < month && b.amount_toman > 0).sort((a, b) => b.month.localeCompare(a.month))[0];
+    if (!prev) return null;
+    const now = rate ?? lastRate.current;
+    const prevRate = prev.rate ?? null;
+    const budgetUsd = prevRate ? prev.amount_toman / prevRate : null;
+
+    // last up to 3 closed months of real spend, each purchase in USD at its own rate
+    const first = monthKey(family.created_at);
+    let h = prevMonthKey(month);
+    const months: number[] = [];
+    for (let n = 0; n < 3 && h >= first; n++, h = prevMonthKey(h)) {
+      let usdSum = 0, tomanSum = 0, any = false;
+      for (const i of items) {
+        if (i.status === "bought" && i.bought_at && monthKey(i.bought_at) === h) {
+          any = true;
+          tomanSum += itemCost(i);
+          usdSum += i.rate ? itemCost(i) / i.rate : 0;
+        }
+      }
+      if (any) months.push(usdSum > 0 ? usdSum : now ? tomanSum / now : 0);
+    }
+    const spendUsd = months.length ? months.reduce((a, b) => a + b, 0) / months.length : null;
+
+    let usd: number | null = null;
+    let basis = "";
+    if (budgetUsd && spendUsd) { usd = 0.5 * budgetUsd + 0.5 * spendUsd; basis = "میانگین بودجه ماه قبل و خرج واقعی چند ماه اخیر"; }
+    else if (budgetUsd) { usd = budgetUsd; basis = "بودجه ماه قبل، با دلار ثابت"; }
+    else if (spendUsd) { usd = spendUsd; basis = "خرج واقعی ماه‌های قبل"; }
+
+    let toman: number;
+    if (usd && now) toman = usd * now;
+    else { toman = prev.amount_toman; basis = "همون بودجه ماه قبل (نرخ دلار نداریم)"; }
+    toman = Math.round(toman / 500_000) * 500_000 || prev.amount_toman;
+    return { toman, usd: now ? toman / now : null, basis, prevToman: prev.amount_toman };
+  }, [budgets, items, month, rate, family.created_at]);
+
   // ── actions (optimistic, realtime reconciles) ──
   const addItem: Ctx["addItem"] = async (n) => {
     const now = new Date().toISOString();
@@ -375,10 +418,10 @@ export function StoreProvider({
   };
 
   const upsertBudget = async (category: string, amount: number, mk: string) => {
-    setBudgets((p) => [...p.filter((b) => !(b.category === category && b.month === mk)), { family_id: fid, category, month: mk, amount_toman: amount }]);
+    setBudgets((p) => [...p.filter((b) => !(b.category === category && b.month === mk)), { family_id: fid, category, month: mk, amount_toman: amount, rate: lastRate.current }]);
     const { error } = await sb
       .from("budgets")
-      .upsert({ family_id: fid, category, month: mk, amount_toman: amount }, { onConflict: "family_id,category,month" });
+      .upsert({ family_id: fid, category, month: mk, amount_toman: amount, rate: lastRate.current }, { onConflict: "family_id,category,month" });
     if (error) throw error;
   };
 
@@ -393,6 +436,7 @@ export function StoreProvider({
     }
   };
 
+  const acceptBudget: Ctx["acceptBudget"] = (toman) => upsertBudget(TOTAL, toman, month);
   const setTotalBudget: Ctx["setTotalBudget"] = async (amount, mk = month) => {
     await pinCurrent(mk);
     await upsertBudget(TOTAL, amount, mk);
@@ -438,7 +482,7 @@ export function StoreProvider({
 
   const value: Ctx = {
     family, me, members, nameOf, items, budgets, goals, moves, rate, rateInfo, setManualRate, ready, month,
-    spentIn, budgetFor, totalBudget, isManual, fund,
+    spentIn, budgetFor, totalBudget, isManual, budgetSuggestion, acceptBudget, fund,
     addItem, updateItem, removeItem, markBought, lastPrice, buy, askingPrice, answerPrice, undoBought, setTotalBudget, setCategoryBudget,
     addGoal, activateGoal, removeGoal, addMove, setRewardPct, signOut,
   };
