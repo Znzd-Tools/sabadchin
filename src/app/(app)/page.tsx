@@ -81,6 +81,16 @@ export default function Home() {
           )}
         </section>
 
+        {/* monthly plan */}
+        <Link href="/plan" className="card flex items-center gap-4 p-4" style={{ background: "#CDEBB8" }}>
+          <div className="text-4xl">📋</div>
+          <div className="flex-1">
+            <div className="font-display text-xl">برنامه این ماه</div>
+            <div className="text-xs font-bold text-ink-soft">با بودجه‌ی مونده، چی بخریم و چی بیفته ماه بعد</div>
+          </div>
+          <span className="text-2xl">‹</span>
+        </Link>
+
         {/* reward fund */}
         <Link href="/fun" className="card flex items-center gap-4 p-4" style={{ background: "#E3DBFF" }}>
           <div className="wobble text-5xl">{goal?.emoji ?? "🎉"}</div>
