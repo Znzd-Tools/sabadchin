@@ -1,7 +1,5 @@
 -- سبدچین: initial schema. Run in the Supabase SQL editor or via `supabase db push`.
 
-create extension if not exists pgcrypto;
-
 -- ───────── tables ─────────
 create table public.families (
   id uuid primary key default gen_random_uuid(),
@@ -77,7 +75,7 @@ $$;
 
 create or replace function public.make_invite_code()
 returns text language sql as $$
-  select upper(substr(translate(encode(gen_random_bytes(6), 'base64'), '+/=OIl01', 'XYZABCD'), 1, 6));
+  select upper(substr(replace(gen_random_uuid()::text, '-', ''), 1, 6));
 $$;
 
 create or replace function public.create_family(fam_name text, my_name text)
@@ -127,3 +125,11 @@ create policy moves_all on public.fund_moves for all
 
 -- Realtime so both phones update live.
 alter publication supabase_realtime add table public.items, public.budgets, public.goals, public.fund_moves;
+
+-- Only signed-in users may call the family functions.
+revoke execute on function public.create_family(text, text) from public, anon;
+revoke execute on function public.join_family(text, text) from public, anon;
+revoke execute on function public.is_member(uuid) from public, anon;
+grant execute on function public.create_family(text, text) to authenticated;
+grant execute on function public.join_family(text, text) to authenticated;
+grant execute on function public.is_member(uuid) to authenticated;
