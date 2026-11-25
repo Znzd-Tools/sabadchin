@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
 import QuickAdd from "@/components/quick-add";
+import PriceSheet from "@/components/price-sheet";
 
 const TABS = [
   { href: "/", label: "خونه", icon: "🏠" },
@@ -37,6 +38,7 @@ export default function Shell({ children }: { children: React.ReactNode }) {
       </nav>
 
       <QuickAdd open={open} onClose={() => setOpen(false)} />
+      <PriceSheet />
     </div>
   );
 }

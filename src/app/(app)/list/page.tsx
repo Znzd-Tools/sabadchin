@@ -78,7 +78,7 @@ function Row({ i, onOpen }: { i: Item; onOpen: () => void }) {
         aria-label={done ? "برگردون به لیست" : "خریدم"}
         className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border-2 border-ink text-lg active:scale-90"
         style={{ background: done ? "var(--color-leaf)" : "#fff", color: "#fff" }}
-        onClick={() => (done ? s.undoBought(i.id) : s.markBought(i.id))}
+        onClick={() => (done ? s.undoBought(i.id) : s.buy(i.id))}
       >
         {done ? "✓" : ""}
       </button>
@@ -93,6 +93,9 @@ function Row({ i, onOpen }: { i: Item; onOpen: () => void }) {
             {done && i.bought_at ? ` · ${s.nameOf(i.bought_by)} · ${dayLabel(i.bought_at)}` : ""}
           </div>
         </div>
+        {itemCost(i) === 0 && !done && s.lastPrice(i.title) && (
+          <div className="num text-end text-xs font-bold text-ink-soft">حدود {short(s.lastPrice(i.title)!)}</div>
+        )}
         {itemCost(i) > 0 && (
           <div className="text-end">
             <div className="num font-extrabold">{short(itemCost(i))}</div>

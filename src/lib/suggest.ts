@@ -2,7 +2,18 @@ import type { Item } from "@/lib/store";
 
 export type Suggestion = { title: string; category: string; est: number; daysSince: number; every: number };
 
-const norm = (s: string) => s.replace(/ي/g, "ی").replace(/ك/g, "ک").trim();
+export const norm = (s: string) => s.replace(/ي/g, "ی").replace(/ك/g, "ک").replace(/\s+/g, " ").trim();
+
+/** Last real price paid for each title (normalised). Falls back to an entered estimate. */
+export function buildPriceMemory(items: Item[]): Map<string, number> {
+  const bought = items
+    .filter((i) => i.status === "bought" && (i.actual_toman ?? 0) > 0)
+    .sort((a, b) => (b.bought_at ?? "").localeCompare(a.bought_at ?? ""));
+  const m = new Map<string, number>();
+  for (const i of bought) if (!m.has(norm(i.title))) m.set(norm(i.title), i.actual_toman!);
+  for (const i of items) if (i.est_toman > 0 && !m.has(norm(i.title))) m.set(norm(i.title), i.est_toman);
+  return m;
+}
 
 /**
  * "Oil is overdue" — pure rule, no AI.

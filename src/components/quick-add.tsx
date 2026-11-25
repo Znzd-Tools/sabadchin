@@ -3,11 +3,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Sheet, Sticker } from "@/components/ui";
 import { CATEGORIES, PRIORITIES, guessCategory, type Priority } from "@/lib/categories";
-import { fa, parseToman, usd } from "@/lib/format";
+import { fa, parseToman, short, usd } from "@/lib/format";
 import { useStore } from "@/lib/store";
 
 export default function QuickAdd({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { items, addItem, rate } = useStore();
+  const { items, addItem, rate, lastPrice } = useStore();
   const [title, setTitle] = useState("");
   const [price, setPrice] = useState("");
   const [cat, setCat] = useState<string | null>(null);
@@ -38,6 +38,7 @@ export default function QuickAdd({ open, onClose }: { open: boolean; onClose: ()
   const effCat = cat ?? guessed ?? "other";
   const toman = parseToman(price);
   const dollars = toman && usd(toman, rate);
+  const remembered = !price && title.trim().length > 1 ? lastPrice(title) : null;
 
   function reset() {
     setTitle(""); setPrice(""); setCat(null); setCatTouched(false); setPri("need"); setBought(false); setErr(null);
@@ -106,7 +107,7 @@ export default function QuickAdd({ open, onClose }: { open: boolean; onClose: ()
           <input
             className="field num text-lg font-bold"
             inputMode="decimal"
-            placeholder="قیمت؟ مثلاً ۲۵۰ هزار یا ۲ میلیون"
+            placeholder={bought ? "چقدر شد؟ مثلاً ۲۵۰ هزار" : "قیمت (اختیاری) مثلاً ۲۵۰ هزار"}
             value={price}
             onChange={(e) => setPrice(e.target.value)}
           />
@@ -115,6 +116,12 @@ export default function QuickAdd({ open, onClose }: { open: boolean; onClose: ()
             <span dir="ltr">{dollars ? `≈ ${dollars}` : ""}</span>
           </div>
         </div>
+
+        {remembered && (
+          <button type="button" className="chip -mt-1 self-start" onClick={() => setPrice(String(remembered))}>
+            💡 دفعه قبل {short(remembered)} تومان بود، همونو بذار
+          </button>
+        )}
 
         <div className="grid grid-cols-3 gap-2">
           {PRIORITIES.map((p) => (

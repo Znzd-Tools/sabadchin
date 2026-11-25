@@ -100,7 +100,7 @@ export default function Home() {
                     <div className="text-xs text-ink-soft">{catOf(i.category).label}</div>
                   </div>
                   {i.est_toman > 0 && <div className="num text-sm font-extrabold">{short(itemCost(i))}</div>}
-                  <button className="btn bg-leaf px-3 py-1.5 text-sm text-white" onClick={() => s.markBought(i.id)}>خریدم ✓</button>
+                  <button className="btn bg-leaf px-3 py-1.5 text-sm text-white" onClick={() => s.buy(i.id)}>خریدم ✓</button>
                 </div>
               ))}
             </div>

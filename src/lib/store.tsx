@@ -5,6 +5,7 @@ import { supabaseBrowser } from "@/lib/supabase/client";
 import { monthKey, monthsBetween, prevMonthKey } from "@/lib/jalali";
 import { CATEGORIES, DEFAULT_WEIGHTS } from "@/lib/categories";
 import type { Priority } from "@/lib/categories";
+import { buildPriceMemory, norm } from "@/lib/suggest";
 
 export type Item = {
   id: string;
@@ -60,6 +61,10 @@ type Ctx = {
   updateItem: (id: string, patch: Partial<Item>) => Promise<void>;
   removeItem: (id: string) => Promise<void>;
   markBought: (id: string, actual?: number) => Promise<void>;
+  lastPrice: (title: string) => number | null;
+  buy: (id: string) => Promise<void>;
+  askingPrice: Item | null;
+  answerPrice: (price: number | null) => Promise<void>;
   undoBought: (id: string) => Promise<void>;
   setTotalBudget: (amount: number) => Promise<void>;
   setCategoryBudget: (category: string, amount: number) => Promise<void>;
@@ -157,6 +162,10 @@ export function StoreProvider({
       .catch(() => {});
   }, []);
 
+  const priceMem = useMemo(() => buildPriceMemory(items), [items]);
+  const lastPrice = useCallback((title: string) => priceMem.get(norm(title)) ?? null, [priceMem]);
+  const [askingPrice, setAskingPrice] = useState<Item | null>(null);
+
   const nameOf = useCallback((uid: string | null) => members.find((m) => m.user_id === uid)?.display_name ?? "—", [members]);
 
   // ── derived ──
@@ -210,10 +219,24 @@ export function StoreProvider({
           }
         }
       }
+      // What is already on the to-buy list (entered price, or the last price we remember).
+      const pend: Record<string, number> = {};
+      let pendTotal = 0;
+      for (const i of items) {
+        if (i.status !== "todo") continue;
+        const unit = i.est_toman > 0 ? i.est_toman : priceMem.get(norm(i.title)) ?? 0;
+        pend[i.category] = (pend[i.category] ?? 0) + unit * i.qty;
+        pendTotal += unit * i.qty;
+      }
       const auto = CATEGORIES.filter((c) => !manual.includes(c));
+      // defaults 40% · real spending 30% · shopping list 30%, renormalised over what exists.
+      const wd = 0.4, wh = pastTotal > 0 ? 0.3 : 0, wp = pendTotal > 0 ? 0.3 : 0;
+      const wsum = wd + wh + wp;
       const w = auto.map((c) => {
         const d = DEFAULT_WEIGHTS[c.key] ?? 0;
-        return pastTotal > 0 ? 0.5 * d + 0.5 * ((past[c.key] ?? 0) / pastTotal) * 100 : d;
+        const h = pastTotal > 0 ? ((past[c.key] ?? 0) / pastTotal) * 100 : 0;
+        const p = pendTotal > 0 ? ((pend[c.key] ?? 0) / pendTotal) * 100 : 0;
+        return (wd * d + wh * h + wp * p) / wsum;
       });
       const sum = w.reduce((a, b) => a + b, 0) || 1;
       auto.forEach((c, idx) => {
@@ -222,7 +245,7 @@ export function StoreProvider({
       allocCache.set(mk, out);
       return out;
     },
-    [allocCache, effective, items],
+    [allocCache, effective, items, priceMem],
   );
 
   const budgetFor = useCallback((category: string, mk: string) => allocate(mk)[category] ?? 0, [allocate]);
@@ -287,6 +310,21 @@ export function StoreProvider({
     });
   };
 
+  // Tap "bought": if the item has no price yet, ask for it (optional); otherwise just mark it.
+  const buy: Ctx["buy"] = async (id) => {
+    const it = items.find((i) => i.id === id);
+    if (!it) return;
+    if (it.est_toman > 0) return markBought(id);
+    setAskingPrice(it);
+  };
+  const answerPrice: Ctx["answerPrice"] = async (price) => {
+    const it = askingPrice;
+    setAskingPrice(null);
+    if (!it) return;
+    await markBought(it.id, price ?? undefined);
+    if (price) await updateItem(it.id, { est_toman: price });
+  };
+
   const undoBought: Ctx["undoBought"] = async (id) => {
     await updateItem(id, { status: "todo", bought_at: null, bought_by: null, actual_toman: null });
   };
@@ -338,7 +376,7 @@ export function StoreProvider({
   const value: Ctx = {
     family, me, members, nameOf, items, budgets, goals, moves, rate, ready, month,
     spentIn, budgetFor, totalBudget, isManual, fund,
-    addItem, updateItem, removeItem, markBought, undoBought, setTotalBudget, setCategoryBudget,
+    addItem, updateItem, removeItem, markBought, lastPrice, buy, askingPrice, answerPrice, undoBought, setTotalBudget, setCategoryBudget,
     addGoal, activateGoal, removeGoal, addMove, setRewardPct, signOut,
   };
   return <StoreCtx.Provider value={value}>{children}</StoreCtx.Provider>;
