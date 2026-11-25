@@ -1,0 +1,299 @@
+"use client";
+
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { supabaseBrowser } from "@/lib/supabase/client";
+import { monthKey, monthsBetween } from "@/lib/jalali";
+import type { Priority } from "@/lib/categories";
+
+export type Item = {
+  id: string;
+  family_id: string;
+  title: string;
+  category: string;
+  priority: Priority;
+  qty: number;
+  est_toman: number;
+  actual_toman: number | null;
+  rate: number | null;
+  status: "todo" | "bought";
+  bought_at: string | null;
+  bought_by: string | null;
+  created_by: string;
+  created_at: string;
+};
+export type Budget = { family_id: string; category: string; month: string; amount_toman: number };
+export type Goal = { id: string; family_id: string; title: string; emoji: string; target_toman: number; is_active: boolean };
+export type Move = { id: string; family_id: string; amount_toman: number; note: string; created_by: string; created_at: string };
+export type Family = { id: string; name: string; invite_code: string; reward_pct: number; created_at: string };
+export type Member = { user_id: string; display_name: string; role: string };
+
+export type NewItem = {
+  title: string;
+  category: string;
+  priority: Priority;
+  qty?: number;
+  est_toman: number;
+  bought?: boolean;
+};
+
+type Ctx = {
+  family: Family;
+  me: Member;
+  members: Member[];
+  nameOf: (uid: string | null) => string;
+  items: Item[];
+  budgets: Budget[];
+  goals: Goal[];
+  moves: Move[];
+  rate: number | null;
+  ready: boolean;
+  month: string;
+  // derived
+  spentIn: (month: string, category?: string) => number;
+  budgetFor: (category: string, month: string) => number;
+  totalBudget: (month: string) => number;
+  fund: { rewards: { month: string; budget: number; spent: number; saved: number }[]; rewardTotal: number; manual: number; balance: number };
+  // actions
+  addItem: (n: NewItem) => Promise<void>;
+  updateItem: (id: string, patch: Partial<Item>) => Promise<void>;
+  removeItem: (id: string) => Promise<void>;
+  markBought: (id: string, actual?: number) => Promise<void>;
+  undoBought: (id: string) => Promise<void>;
+  setBudget: (category: string, amount: number) => Promise<void>;
+  addGoal: (g: { title: string; emoji: string; target_toman: number }) => Promise<void>;
+  activateGoal: (id: string) => Promise<void>;
+  removeGoal: (id: string) => Promise<void>;
+  addMove: (amount: number, note: string) => Promise<void>;
+  setRewardPct: (pct: number) => Promise<void>;
+  signOut: () => Promise<void>;
+};
+
+const StoreCtx = createContext<Ctx | null>(null);
+export const useStore = () => {
+  const c = useContext(StoreCtx);
+  if (!c) throw new Error("useStore outside provider");
+  return c;
+};
+
+const RATE_KEY = "sabadchin:rate";
+
+export const itemCost = (i: Item) => (i.status === "bought" ? i.actual_toman ?? i.est_toman : i.est_toman) * i.qty;
+
+export function StoreProvider({
+  family: f0,
+  me,
+  members,
+  children,
+}: {
+  family: Family;
+  me: Member;
+  members: Member[];
+  children: React.ReactNode;
+}) {
+  const sb = useMemo(() => supabaseBrowser(), []);
+  const [family, setFamily] = useState(f0);
+  const [items, setItems] = useState<Item[]>([]);
+  const [budgets, setBudgets] = useState<Budget[]>([]);
+  const [goals, setGoals] = useState<Goal[]>([]);
+  const [moves, setMoves] = useState<Move[]>([]);
+  const [rate, setRate] = useState<number | null>(null);
+  const [ready, setReady] = useState(false);
+  const fid = family.id;
+  const month = monthKey();
+  const lastRate = useRef<number | null>(null);
+
+  const load = useCallback(async () => {
+    const [i, b, g, m] = await Promise.all([
+      sb.from("items").select("*").eq("family_id", fid).order("created_at", { ascending: false }),
+      sb.from("budgets").select("*").eq("family_id", fid),
+      sb.from("goals").select("*").eq("family_id", fid).order("created_at"),
+      sb.from("fund_moves").select("*").eq("family_id", fid).order("created_at", { ascending: false }),
+    ]);
+    if (i.data) setItems(i.data as Item[]);
+    if (b.data) setBudgets(b.data as Budget[]);
+    if (g.data) setGoals(g.data as Goal[]);
+    if (m.data) setMoves(m.data as Move[]);
+    setReady(true);
+  }, [sb, fid]);
+
+  useEffect(() => {
+    load();
+    const ch = sb
+      .channel(`fam-${fid}`)
+      .on("postgres_changes", { event: "*", schema: "public", filter: `family_id=eq.${fid}` }, () => load())
+      .subscribe();
+    const onVis = () => document.visibilityState === "visible" && load();
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      document.removeEventListener("visibilitychange", onVis);
+      sb.removeChannel(ch);
+    };
+  }, [sb, fid, load]);
+
+  // USDT rate: fresh from server, fall back to the last good one saved on this phone.
+  useEffect(() => {
+    try {
+      const saved = Number(localStorage.getItem(RATE_KEY));
+      if (saved > 0) {
+        setRate(saved);
+        lastRate.current = saved;
+      }
+    } catch {}
+    fetch("/api/rate")
+      .then((r) => r.json())
+      .then((d) => {
+        if (d?.rate) {
+          setRate(d.rate);
+          lastRate.current = d.rate;
+          try {
+            localStorage.setItem(RATE_KEY, String(d.rate));
+          } catch {}
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  const nameOf = useCallback((uid: string | null) => members.find((m) => m.user_id === uid)?.display_name ?? "—", [members]);
+
+  // ── derived ──
+  const spentIn = useCallback(
+    (mk: string, category?: string) =>
+      items
+        .filter((i) => i.status === "bought" && i.bought_at && monthKey(i.bought_at) === mk && (!category || i.category === category))
+        .reduce((s, i) => s + itemCost(i), 0),
+    [items],
+  );
+
+  const budgetFor = useCallback(
+    (category: string, mk: string) => {
+      let best: Budget | null = null;
+      for (const b of budgets) if (b.category === category && b.month <= mk && (!best || b.month > best.month)) best = b;
+      return best?.amount_toman ?? 0;
+    },
+    [budgets],
+  );
+
+  const totalBudget = useCallback(
+    (mk: string) => {
+      const cats = new Set(budgets.map((b) => b.category));
+      let s = 0;
+      cats.forEach((c) => (s += budgetFor(c, mk)));
+      return s;
+    },
+    [budgets, budgetFor],
+  );
+
+  const fund = useMemo(() => {
+    const start = monthKey(family.created_at);
+    const rewards = monthsBetween(start, month).map((mk) => {
+      const budget = totalBudget(mk);
+      const spent = spentIn(mk);
+      const saved = budget > 0 ? Math.round((Math.max(0, budget - spent) * family.reward_pct) / 100) : 0;
+      return { month: mk, budget, spent, saved };
+    });
+    const rewardTotal = rewards.reduce((s, r) => s + r.saved, 0);
+    const manual = moves.reduce((s, m) => s + m.amount_toman, 0);
+    return { rewards: rewards.reverse(), rewardTotal, manual, balance: rewardTotal + manual };
+  }, [family.created_at, family.reward_pct, month, totalBudget, spentIn, moves]);
+
+  // ── actions (optimistic, realtime reconciles) ──
+  const addItem: Ctx["addItem"] = async (n) => {
+    const now = new Date().toISOString();
+    const row = {
+      family_id: fid,
+      title: n.title.trim(),
+      category: n.category,
+      priority: n.priority,
+      qty: n.qty ?? 1,
+      est_toman: n.est_toman,
+      actual_toman: n.bought ? n.est_toman : null,
+      rate: lastRate.current,
+      status: n.bought ? "bought" : "todo",
+      bought_at: n.bought ? now : null,
+      bought_by: n.bought ? me.user_id : null,
+      created_by: me.user_id,
+    };
+    const tmp: Item = { ...(row as unknown as Item), id: `tmp-${now}`, created_at: now };
+    setItems((p) => [tmp, ...p]);
+    const { error } = await sb.from("items").insert(row);
+    if (error) throw error;
+    load();
+  };
+
+  const updateItem: Ctx["updateItem"] = async (id, patch) => {
+    setItems((p) => p.map((i) => (i.id === id ? { ...i, ...patch } : i)));
+    const { error } = await sb.from("items").update(patch).eq("id", id);
+    if (error) throw error;
+  };
+
+  const removeItem: Ctx["removeItem"] = async (id) => {
+    setItems((p) => p.filter((i) => i.id !== id));
+    const { error } = await sb.from("items").delete().eq("id", id);
+    if (error) throw error;
+  };
+
+  const markBought: Ctx["markBought"] = async (id, actual) => {
+    const it = items.find((i) => i.id === id);
+    await updateItem(id, {
+      status: "bought",
+      bought_at: new Date().toISOString(),
+      bought_by: me.user_id,
+      actual_toman: actual ?? it?.est_toman ?? 0,
+      rate: lastRate.current ?? it?.rate ?? null,
+    });
+  };
+
+  const undoBought: Ctx["undoBought"] = async (id) => {
+    await updateItem(id, { status: "todo", bought_at: null, bought_by: null, actual_toman: null });
+  };
+
+  const setBudget: Ctx["setBudget"] = async (category, amount) => {
+    setBudgets((p) => [...p.filter((b) => !(b.category === category && b.month === month)), { family_id: fid, category, month, amount_toman: amount }]);
+    const { error } = await sb
+      .from("budgets")
+      .upsert({ family_id: fid, category, month, amount_toman: amount }, { onConflict: "family_id,category,month" });
+    if (error) throw error;
+  };
+
+  const addGoal: Ctx["addGoal"] = async (g) => {
+    const first = goals.length === 0;
+    const { error } = await sb.from("goals").insert({ ...g, family_id: fid, is_active: first });
+    if (error) throw error;
+    load();
+  };
+
+  const activateGoal: Ctx["activateGoal"] = async (id) => {
+    setGoals((p) => p.map((g) => ({ ...g, is_active: g.id === id })));
+    await sb.from("goals").update({ is_active: false }).eq("family_id", fid);
+    await sb.from("goals").update({ is_active: true }).eq("id", id);
+  };
+
+  const removeGoal: Ctx["removeGoal"] = async (id) => {
+    setGoals((p) => p.filter((g) => g.id !== id));
+    await sb.from("goals").delete().eq("id", id);
+  };
+
+  const addMove: Ctx["addMove"] = async (amount, note) => {
+    const { error } = await sb.from("fund_moves").insert({ family_id: fid, amount_toman: amount, note, created_by: me.user_id });
+    if (error) throw error;
+    load();
+  };
+
+  const setRewardPct: Ctx["setRewardPct"] = async (pct) => {
+    setFamily((f) => ({ ...f, reward_pct: pct }));
+    await sb.from("families").update({ reward_pct: pct }).eq("id", fid);
+  };
+
+  const signOut = async () => {
+    await sb.auth.signOut();
+    window.location.href = "/login";
+  };
+
+  const value: Ctx = {
+    family, me, members, nameOf, items, budgets, goals, moves, rate, ready, month,
+    spentIn, budgetFor, totalBudget, fund,
+    addItem, updateItem, removeItem, markBought, undoBought, setBudget,
+    addGoal, activateGoal, removeGoal, addMove, setRewardPct, signOut,
+  };
+  return <StoreCtx.Provider value={value}>{children}</StoreCtx.Provider>;
+}

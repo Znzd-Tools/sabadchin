@@ -1,0 +1,13 @@
+{
+  "name": "سبدچین",
+  "short_name": "سبدچین",
+  "lang": "fa",
+  "dir": "rtl",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#FBF3E4",
+  "theme_color": "#FBF3E4",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

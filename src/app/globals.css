@@ -1,0 +1,164 @@
+@import "tailwindcss";
+
+@theme {
+  --font-display: "Lalezar", "Vazirmatn", system-ui, sans-serif;
+  --font-sans: "Vazirmatn", system-ui, sans-serif;
+  --color-paper: #fbf3e4;
+  --color-card: #fffaf0;
+  --color-ink: #1f1b16;
+  --color-ink-soft: #6b6256;
+  --color-tomato: #ff5a36;
+  --color-mango: #ffb627;
+  --color-leaf: #3fbf7f;
+  --color-sky: #5b7cff;
+  --color-grape: #7a5cff;
+  --color-line: #1f1b16;
+}
+
+:root {
+  color-scheme: light;
+  --shadow: -4px 4px 0 0 var(--color-ink);
+  --shadow-sm: -2px 2px 0 0 var(--color-ink);
+}
+
+html,
+body {
+  background: var(--color-paper);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior-y: none;
+}
+
+body {
+  background-image: radial-gradient(rgba(31, 27, 22, 0.07) 1px, transparent 1.4px);
+  background-size: 18px 18px;
+  min-height: 100dvh;
+}
+
+.font-display {
+  font-family: var(--font-display);
+  letter-spacing: 0;
+}
+
+/* sticker card */
+.card {
+  background: var(--color-card);
+  border: 2px solid var(--color-ink);
+  border-radius: 24px;
+  box-shadow: var(--shadow);
+}
+.card-flat {
+  background: var(--color-card);
+  border: 2px solid var(--color-ink);
+  border-radius: 20px;
+}
+
+/* chunky button with press effect */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  border: 2px solid var(--color-ink);
+  border-radius: 18px;
+  padding: 0.75rem 1.25rem;
+  font-weight: 800;
+  background: var(--color-mango);
+  box-shadow: var(--shadow-sm);
+  transition: transform 0.08s, box-shadow 0.08s;
+  cursor: pointer;
+}
+.btn:active {
+  transform: translate(-2px, 2px);
+  box-shadow: 0 0 0 0 var(--color-ink);
+}
+.btn:disabled {
+  opacity: 0.5;
+  pointer-events: none;
+}
+.btn-tomato {
+  background: var(--color-tomato);
+  color: #fff;
+}
+.btn-ghost {
+  background: transparent;
+  box-shadow: none;
+}
+
+.field {
+  width: 100%;
+  background: #fff;
+  border: 2px solid var(--color-ink);
+  border-radius: 16px;
+  padding: 0.8rem 1rem;
+  font-size: 1rem;
+  outline: none;
+  transition: box-shadow 0.12s;
+}
+.field:focus {
+  box-shadow: var(--shadow-sm);
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border: 2px solid var(--color-ink);
+  border-radius: 999px;
+  padding: 0.3rem 0.8rem;
+  font-weight: 700;
+  font-size: 0.85rem;
+  white-space: nowrap;
+  background: #fff;
+  cursor: pointer;
+  transition: transform 0.1s;
+}
+.chip[data-on="true"] {
+  background: var(--color-ink);
+  color: var(--color-paper);
+}
+.chip:active {
+  transform: scale(0.95);
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  scrollbar-width: none;
+}
+
+.num {
+  font-variant-numeric: tabular-nums;
+}
+
+/* bottom sheet animation */
+@keyframes sheet-in {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes pop {
+  0% { transform: scale(0.6); opacity: 0; }
+  70% { transform: scale(1.08); }
+  100% { transform: scale(1); opacity: 1; }
+}
+@keyframes wobble {
+  0%, 100% { transform: rotate(-3deg); }
+  50% { transform: rotate(3deg); }
+}
+.sheet-in { animation: sheet-in 0.28s cubic-bezier(0.2, 0.9, 0.3, 1); }
+.fade-in { animation: fade-in 0.2s ease-out; }
+.pop { animation: pop 0.35s cubic-bezier(0.2, 0.9, 0.3, 1.2); }
+.wobble { animation: wobble 2.4s ease-in-out infinite; }
+
+.safe-b { padding-bottom: max(env(safe-area-inset-bottom), 0.75rem); }
+.safe-t { padding-top: max(env(safe-area-inset-top), 0.75rem); }
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+}
