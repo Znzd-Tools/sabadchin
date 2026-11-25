@@ -1,10 +1,25 @@
 import { NextResponse } from "next/server";
 
-// USDT price in Toman from Abantether. The exact endpoint is configurable because
-// exchanges change them without notice. The parser accepts several response shapes.
-const URL_ = process.env.ABAN_RATE_URL ?? "https://abantether.com/management/all-coins/?format=json";
-
+// USDT price in Toman. Tries several sources in order and reports which one answered.
+// Every endpoint here is configurable/replaceable: exchanges change them without notice.
 type Json = unknown;
+
+const SOURCES: { name: string; url: string; pick: (j: Json) => number | null }[] = [
+  {
+    name: "abantether",
+    url: process.env.ABAN_RATE_URL ?? "https://abantether.com/management/all-coins/?format=json",
+    pick: findUsdt,
+  },
+  {
+    name: "nobitex",
+    url: "https://api.nobitex.ir/v3/orderbook/USDTIRT",
+    pick: (j) => {
+      const o = j as { lastTradePrice?: string };
+      const v = Number(o?.lastTradePrice);
+      return Number.isFinite(v) && v > 0 ? v : null;
+    },
+  },
+];
 
 function findUsdt(node: Json): number | null {
   if (Array.isArray(node)) {
@@ -20,7 +35,7 @@ function findUsdt(node: Json): number | null {
     if (sym === "USDT") {
       for (const k of ["priceBuy", "price_buy", "buy", "price", "priceSell", "sell"]) {
         const v = Number(o[k]);
-        if (Number.isFinite(v) && v > 1000) return v; // toman range sanity check
+        if (Number.isFinite(v) && v > 1000) return v;
       }
     }
     for (const v of Object.values(o)) {
@@ -32,14 +47,18 @@ function findUsdt(node: Json): number | null {
 }
 
 export async function GET() {
-  try {
-    const r = await fetch(URL_, { next: { revalidate: 300 }, headers: { accept: "application/json" } });
-    if (!r.ok) throw new Error(`status ${r.status}`);
-    let rate = findUsdt(await r.json());
-    if (rate && rate > 400_000) rate = rate / 10; // looks like Rial → Toman
-    if (!rate) throw new Error("USDT not found");
-    return NextResponse.json({ rate: Math.round(rate), source: "abantether", at: new Date().toISOString() });
-  } catch (e) {
-    return NextResponse.json({ rate: null, error: String(e) }, { status: 502 });
+  const errors: string[] = [];
+  for (const s of SOURCES) {
+    try {
+      const r = await fetch(s.url, { next: { revalidate: 300 }, headers: { accept: "application/json" }, signal: AbortSignal.timeout(6000) });
+      if (!r.ok) throw new Error(`status ${r.status}`);
+      let rate = s.pick(await r.json());
+      if (rate && rate > 1_000_000) rate = rate / 10; // Rial → Toman
+      if (!rate || rate < 1000) throw new Error("no usable price");
+      return NextResponse.json({ rate: Math.round(rate), source: s.name, at: new Date().toISOString() });
+    } catch (e) {
+      errors.push(`${s.name}: ${String(e)}`);
+    }
   }
+  return NextResponse.json({ rate: null, errors }, { status: 502 });
 }

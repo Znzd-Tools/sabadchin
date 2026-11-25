@@ -12,7 +12,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   if (!mine) redirect("/onboarding");
 
   const [{ data: family }, { data: members }] = await Promise.all([
-    sb.from("families").select("id, name, invite_code, reward_pct, created_at").eq("id", mine.family_id).single(),
+    sb.from("families").select("id, name, invite_code, reward_pct, created_at, usd_rate, usd_rate_at, usd_rate_manual").eq("id", mine.family_id).single(),
     sb.from("members").select("user_id, display_name, role").eq("family_id", mine.family_id),
   ]);
   if (!family) redirect("/onboarding");

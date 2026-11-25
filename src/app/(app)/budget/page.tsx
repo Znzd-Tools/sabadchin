@@ -4,31 +4,45 @@ import { useState } from "react";
 import { Bar, PageHead, Sheet, Sticker } from "@/components/ui";
 import { CATEGORIES, GROUPS, catOf, type Group } from "@/lib/categories";
 import { fa, parseToman, short, usd } from "@/lib/format";
-import { monthLabel } from "@/lib/jalali";
+import { monthKey, monthLabel, nextMonthKey, prevMonthKey } from "@/lib/jalali";
 import { useStore } from "@/lib/store";
 
 export default function BudgetPage() {
   const s = useStore();
   const [mode, setMode] = useState<null | "total" | string>(null);
   const [val, setVal] = useState("");
+  const [viewMonth, setViewMonth] = useState(s.month);
+  const [sure, setSure] = useState(false);
 
-  const total = s.totalBudget(s.month);
-  const spent = s.spentIn(s.month);
+  const first = monthKey(s.family.created_at);
+  const isPast = viewMonth < s.month;
+  const total = s.totalBudget(viewMonth);
+  const spent = s.spentIn(viewMonth);
   const toman = parseToman(val);
 
   function open(m: "total" | string) {
     setMode(m);
-    const cur = m === "total" ? total : s.isManual(m, s.month) ? s.budgetFor(m, s.month) : 0;
+    setSure(false);
+    const cur = m === "total" ? total : s.isManual(m, viewMonth) ? s.budgetFor(m, viewMonth) : 0;
     setVal(cur ? String(cur) : "");
   }
 
   return (
     <>
-      <PageHead title="بودجه" sub={monthLabel(s.month)} />
+      <PageHead
+        title="بودجه"
+        right={
+          <div className="flex items-center gap-1">
+            <button aria-label="ماه قبل" className="chip" disabled={viewMonth <= first} style={{ opacity: viewMonth <= first ? 0.4 : 1 }} onClick={() => setViewMonth(prevMonthKey(viewMonth))}>›</button>
+            <span className="chip" data-on>{monthLabel(viewMonth)}</span>
+            <button aria-label="ماه بعد" className="chip" disabled={viewMonth >= s.month} style={{ opacity: viewMonth >= s.month ? 0.4 : 1 }} onClick={() => setViewMonth(nextMonthKey(viewMonth))}>‹</button>
+          </div>
+        }
+      />
       <div className="flex flex-col gap-4 px-4">
         <button onClick={() => open("total")} className="card p-5 text-start active:scale-[0.99]" style={{ background: "#CDEBB8" }}>
           <div className="flex items-baseline justify-between">
-            <span className="text-sm font-extrabold">بودجه کل این ماه</span>
+            <span className="text-sm font-extrabold">{isPast ? "بودجه کل این ماه (گذشته)" : "بودجه کل این ماه"}</span>
             <span className="chip">✏️ تغییر</span>
           </div>
           {total > 0 ? (
@@ -57,9 +71,9 @@ export default function BudgetPage() {
                 <h2 className="font-display mb-2 px-1 text-2xl">{GROUPS[g].label}</h2>
                 <div className="flex flex-col gap-2">
                   {CATEGORIES.filter((c) => c.group === g).map((c) => {
-                    const b = s.budgetFor(c.key, s.month);
-                    const sp = s.spentIn(s.month, c.key);
-                    const manual = s.isManual(c.key, s.month);
+                    const b = s.budgetFor(c.key, viewMonth);
+                    const sp = s.spentIn(viewMonth, c.key);
+                    const manual = s.isManual(c.key, viewMonth);
                     if (!b && !sp) return null;
                     return (
                       <button key={c.key} onClick={() => open(c.key)} className="card-flat flex flex-col gap-2 p-3 text-start active:scale-[0.99]">
@@ -91,21 +105,29 @@ export default function BudgetPage() {
             <span>{toman ? `${fa(toman)} تومان` : ""}</span>
             <span dir="ltr">{toman && usd(toman, s.rate) ? `≈ ${usd(toman, s.rate)}` : ""}</span>
           </div>
-          <p className="text-xs text-ink-soft">از این ماه به بعد اعمال می‌شه. ماه‌های گذشته دست نمی‌خوره.</p>
+          {isPast ? (
+            <div className="card-flat p-3 text-sm font-bold" style={{ background: "#FFE1D8" }}>
+              ⚠️ این ماه تموم شده. تغییر بودجه‌اش پاداش صندوق و حساب‌وکتاب اون ماه رو عوض می‌کنه و ممکنه عددهای قبلی تغییر کنن. بهتره دست نزنی. ولی اگه مطمئنی، می‌تونی.
+            </div>
+          ) : (
+            <p className="text-xs text-ink-soft">از این ماه به بعد اعمال می‌شه. ماه‌های گذشته دست نمی‌خوره.</p>
+          )}
           <div className="grid grid-cols-[1fr_auto] gap-2">
             <button
               className="btn btn-tomato"
               disabled={toman === null}
               onClick={async () => {
-                if (mode === "total") await s.setTotalBudget(toman ?? 0);
-                else await s.setCategoryBudget(mode!, toman ?? 0);
+                if (isPast && !sure) return setSure(true);
+                if (mode === "total") await s.setTotalBudget(toman ?? 0, viewMonth);
+                else await s.setCategoryBudget(mode!, toman ?? 0, viewMonth);
                 setMode(null);
+                setSure(false);
               }}
             >
-              ذخیره
+              {isPast ? (sure ? "آره، تغییر بده" : "تغییر بودجه ماه گذشته") : "ذخیره"}
             </button>
-            {mode !== "total" && s.isManual(mode ?? "", s.month) && (
-              <button className="btn bg-white" onClick={async () => { await s.setCategoryBudget(mode!, 0); setMode(null); }}>برگرد به خودکار</button>
+            {mode !== "total" && s.isManual(mode ?? "", viewMonth) && (
+              <button className="btn bg-white" onClick={async () => { await s.setCategoryBudget(mode!, 0, viewMonth); setMode(null); }}>برگرد به خودکار</button>
             )}
           </div>
         </div>

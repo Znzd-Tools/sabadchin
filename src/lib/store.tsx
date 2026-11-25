@@ -26,7 +26,11 @@ export type Item = {
 export type Budget = { family_id: string; category: string; month: string; amount_toman: number };
 export type Goal = { id: string; family_id: string; title: string; emoji: string; target_toman: number; is_active: boolean };
 export type Move = { id: string; family_id: string; amount_toman: number; note: string; created_by: string; created_at: string };
-export type Family = { id: string; name: string; invite_code: string; reward_pct: number; created_at: string };
+export type Family = {
+  id: string; name: string; invite_code: string; reward_pct: number; created_at: string;
+  usd_rate: number | null; usd_rate_at: string | null; usd_rate_manual: boolean;
+};
+export type RateInfo = { source: "live" | "saved" | "manual" | null; at: string | null };
 export type Member = { user_id: string; display_name: string; role: string };
 
 export type NewItem = {
@@ -48,6 +52,8 @@ type Ctx = {
   goals: Goal[];
   moves: Move[];
   rate: number | null;
+  rateInfo: RateInfo;
+  setManualRate: (n: number | null) => Promise<void>;
   ready: boolean;
   month: string;
   // derived
@@ -66,8 +72,8 @@ type Ctx = {
   askingPrice: Item | null;
   answerPrice: (price: number | null) => Promise<void>;
   undoBought: (id: string) => Promise<void>;
-  setTotalBudget: (amount: number) => Promise<void>;
-  setCategoryBudget: (category: string, amount: number) => Promise<void>;
+  setTotalBudget: (amount: number, month?: string) => Promise<void>;
+  setCategoryBudget: (category: string, amount: number, month?: string) => Promise<void>;
   addGoal: (g: { title: string; emoji: string; target_toman: number }) => Promise<void>;
   activateGoal: (id: string) => Promise<void>;
   removeGoal: (id: string) => Promise<void>;
@@ -139,28 +145,67 @@ export function StoreProvider({
     };
   }, [sb, fid, load]);
 
-  // USDT rate: fresh from server, fall back to the last good one saved on this phone.
-  useEffect(() => {
+  // USDT rate. Order: manual (if you set one) → live from the server → last one saved for the family.
+  const [rateInfo, setRateInfo] = useState<RateInfo>({ source: null, at: null });
+
+  const fetchLive = useCallback(async () => {
     try {
-      const saved = Number(localStorage.getItem(RATE_KEY));
-      if (saved > 0) {
-        setRate(saved);
-        lastRate.current = saved;
+      const d = await fetch("/api/rate").then((r) => r.json());
+      if (!d?.rate) return false;
+      setRate(d.rate);
+      lastRate.current = d.rate;
+      setRateInfo({ source: "live", at: d.at });
+      try {
+        localStorage.setItem(RATE_KEY, String(d.rate));
+      } catch {}
+      const f = familyRef.current;
+      const stale = !f.usd_rate_at || Date.now() - new Date(f.usd_rate_at).getTime() > 30 * 60_000;
+      if (stale || Math.abs((f.usd_rate ?? 0) - d.rate) / d.rate > 0.005) {
+        const at = new Date().toISOString();
+        setFamily((x) => ({ ...x, usd_rate: d.rate, usd_rate_at: at, usd_rate_manual: false }));
+        sb.from("families").update({ usd_rate: d.rate, usd_rate_at: at, usd_rate_manual: false }).eq("id", fid).then(() => {});
       }
-    } catch {}
-    fetch("/api/rate")
-      .then((r) => r.json())
-      .then((d) => {
-        if (d?.rate) {
-          setRate(d.rate);
-          lastRate.current = d.rate;
-          try {
-            localStorage.setItem(RATE_KEY, String(d.rate));
-          } catch {}
-        }
-      })
-      .catch(() => {});
-  }, []);
+      return true;
+    } catch {
+      return false;
+    }
+  }, [sb, fid]);
+
+  const familyRef = useRef(family);
+  useEffect(() => {
+    familyRef.current = family;
+  }, [family]);
+
+  useEffect(() => {
+    const f = familyRef.current;
+    let saved = f.usd_rate ?? 0;
+    if (!saved) {
+      try {
+        saved = Number(localStorage.getItem(RATE_KEY)) || 0;
+      } catch {}
+    }
+    if (saved > 0) {
+      setRate(saved);
+      lastRate.current = saved;
+      setRateInfo({ source: f.usd_rate_manual ? "manual" : "saved", at: f.usd_rate_at });
+    }
+    if (!f.usd_rate_manual) fetchLive();
+  }, [fetchLive]);
+
+  const setManualRate: Ctx["setManualRate"] = async (n) => {
+    if (!n) {
+      setFamily((x) => ({ ...x, usd_rate_manual: false }));
+      await sb.from("families").update({ usd_rate_manual: false }).eq("id", fid);
+      await fetchLive();
+      return;
+    }
+    const at = new Date().toISOString();
+    setRate(n);
+    lastRate.current = n;
+    setRateInfo({ source: "manual", at });
+    setFamily((x) => ({ ...x, usd_rate: n, usd_rate_at: at, usd_rate_manual: true }));
+    await sb.from("families").update({ usd_rate: n, usd_rate_at: at, usd_rate_manual: true }).eq("id", fid);
+  };
 
   const priceMem = useMemo(() => buildPriceMemory(items), [items]);
   const lastPrice = useCallback((title: string) => priceMem.get(norm(title)) ?? null, [priceMem]);
@@ -329,15 +374,33 @@ export function StoreProvider({
     await updateItem(id, { status: "todo", bought_at: null, bought_by: null, actual_toman: null });
   };
 
-  const upsertBudget = async (category: string, amount: number) => {
-    setBudgets((p) => [...p.filter((b) => !(b.category === category && b.month === month)), { family_id: fid, category, month, amount_toman: amount }]);
+  const upsertBudget = async (category: string, amount: number, mk: string) => {
+    setBudgets((p) => [...p.filter((b) => !(b.category === category && b.month === mk)), { family_id: fid, category, month: mk, amount_toman: amount }]);
     const { error } = await sb
       .from("budgets")
-      .upsert({ family_id: fid, category, month, amount_toman: amount }, { onConflict: "family_id,category,month" });
+      .upsert({ family_id: fid, category, month: mk, amount_toman: amount }, { onConflict: "family_id,category,month" });
     if (error) throw error;
   };
-  const setTotalBudget: Ctx["setTotalBudget"] = (amount) => upsertBudget(TOTAL, amount);
-  const setCategoryBudget: Ctx["setCategoryBudget"] = (category, amount) => upsertBudget(category, amount);
+
+  // Editing an old month must not silently rewrite this month: first pin this month's current values.
+  const pinCurrent = async (mk: string) => {
+    if (mk >= month) return;
+    const cats = new Set(["_total", ...budgets.map((b) => b.category)]);
+    for (const c of cats) {
+      const hasNow = budgets.some((b) => b.category === c && b.month === month);
+      const val = effective(c, month);
+      if (!hasNow && val > 0) await upsertBudget(c, val, month);
+    }
+  };
+
+  const setTotalBudget: Ctx["setTotalBudget"] = async (amount, mk = month) => {
+    await pinCurrent(mk);
+    await upsertBudget(TOTAL, amount, mk);
+  };
+  const setCategoryBudget: Ctx["setCategoryBudget"] = async (category, amount, mk = month) => {
+    await pinCurrent(mk);
+    await upsertBudget(category, amount, mk);
+  };
 
   const addGoal: Ctx["addGoal"] = async (g) => {
     const first = goals.length === 0;
@@ -374,7 +437,7 @@ export function StoreProvider({
   };
 
   const value: Ctx = {
-    family, me, members, nameOf, items, budgets, goals, moves, rate, ready, month,
+    family, me, members, nameOf, items, budgets, goals, moves, rate, rateInfo, setManualRate, ready, month,
     spentIn, budgetFor, totalBudget, isManual, fund,
     addItem, updateItem, removeItem, markBought, lastPrice, buy, askingPrice, answerPrice, undoBought, setTotalBudget, setCategoryBudget,
     addGoal, activateGoal, removeGoal, addMove, setRewardPct, signOut,

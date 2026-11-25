@@ -7,12 +7,14 @@ import { PRI_BY_KEY, catOf } from "@/lib/categories";
 import { fa, short, usd } from "@/lib/format";
 import { daysLeftInMonth, monthLabel } from "@/lib/jalali";
 import { itemCost, useStore } from "@/lib/store";
+import RateSheet, { RateChip } from "@/components/rate-sheet";
 import { overdueSuggestions } from "@/lib/suggest";
 
 export default function Home() {
   const s = useStore();
   const { family, me, items, month, rate, ready } = s;
   const [copied, setCopied] = useState(false);
+  const [rateOpen, setRateOpen] = useState(false);
 
   const budget = s.totalBudget(month);
   const spent = s.spentIn(month);
@@ -34,9 +36,12 @@ export default function Home() {
         title={`سلام ${me.display_name} ${mood}`}
         sub={`${family.name} · ${monthLabel(month)}`}
         right={
-          <button className="chip" onClick={() => setCopied(true)}>
-            👥 {fa(s.members.length)}
-          </button>
+          <div className="flex items-center gap-2">
+            <RateChip onClick={() => setRateOpen(true)} />
+            <button className="chip" onClick={() => setCopied(true)}>
+              👥 {fa(s.members.length)}
+            </button>
+          </div>
         }
       />
 
@@ -58,6 +63,7 @@ export default function Home() {
               <div className="font-display num mt-1 text-5xl" style={{ color: left >= 0 ? "var(--color-ink)" : "var(--color-tomato)" }}>
                 {short(Math.abs(left))} <span className="text-xl">تومان</span>
               </div>
+              {usd(Math.abs(left), rate) && <div className="num text-sm font-bold text-ink-soft" dir="ltr">≈ {usd(Math.abs(left), rate)}</div>}
               <div className="my-3"><Bar value={spent} max={budget} color="var(--color-leaf)" h={22} /></div>
               <div className="flex justify-between text-sm font-bold">
                 <span>خرج‌شده {short(spent)}</span>
@@ -77,7 +83,7 @@ export default function Home() {
           <div className="wobble text-5xl">{goal?.emoji ?? "🎉"}</div>
           <div className="min-w-0 flex-1">
             <div className="text-sm font-extrabold">{goal ? goal.title : "صندوق پاداش"}</div>
-            <div className="font-display num text-2xl">{short(s.fund.balance)} <span className="text-base">تومان</span></div>
+            <div className="font-display num text-2xl">{short(s.fund.balance)} <span className="text-base">تومان</span>{usd(s.fund.balance, rate) ? <span className="num ms-2 text-sm font-bold text-ink-soft" dir="ltr">≈ {usd(s.fund.balance, rate)}</span> : null}</div>
             {goal && <div className="mt-1"><Bar value={s.fund.balance} max={goal.target_toman} color="var(--color-grape)" h={12} /></div>}
           </div>
         </Link>
@@ -147,6 +153,8 @@ export default function Home() {
           </section>
         )}
       </div>
+
+      <RateSheet open={rateOpen} onClose={() => setRateOpen(false)} />
 
       <Sheet open={copied} onClose={() => setCopied(false)} title="اعضای خانواده">
         <ul className="mb-4 flex flex-col gap-2">
